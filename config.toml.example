@@ -1,0 +1,7 @@
+[webhook.one]
+url = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+endpoint = "/one"
+
+[webhook.two]
+url = "https://hooks.slack.com/services/T00000000/B00000000/YYYYYYYYYYYYYYYYYYYYYYYY"
+endpoint = "/two"

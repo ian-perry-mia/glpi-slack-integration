@@ -2,5 +2,4 @@ fastapi
 uvicorn
 loguru
 beautifulsoup4
-requests
-python-dotenv
+httpx

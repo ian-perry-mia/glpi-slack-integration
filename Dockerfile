@@ -2,12 +2,14 @@ FROM python:3.12-slim
 
 RUN apt-get update && \
     apt-get upgrade -y && \
+    apt-get install git -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
+RUN git clone https://github.com/ian-perry-mia/slack-glpi-integration.git . && \
+    rm -rf .git
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
