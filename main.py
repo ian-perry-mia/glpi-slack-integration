@@ -43,7 +43,7 @@ async def process_post(request: Request, slack_url: str):
 
         ticket_info = f"Ticket ID: {ticket_id}\n" if ticket_id else ""
 
-        payload = {"text": f"New ticket received:\n{ticket_info}{description_text}"}
+        payload = description_text
 
         await send_to_slack_webhook(payload, slack_url)
 

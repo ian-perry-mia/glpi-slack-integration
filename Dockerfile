@@ -8,7 +8,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-RUN git clone https://github.com/ian-perry-mia/slack-glpi-integration.git . && \
+RUN git clone https://github.com/ian-perry-mia/glpi-slack-integration.git . && \
     rm -rf .git
 
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -18,6 +18,6 @@ RUN mkdir -p /app/logs && chmod 777 /app/logs
 
 COPY . .
 
-EXPOSE 8000
+# This is being used in a docker compose context, therefore no need to specify port.
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
