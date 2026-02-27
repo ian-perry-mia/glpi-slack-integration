@@ -16,8 +16,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 RUN mkdir -p /app/logs && chmod 777 /app/logs
 
-COPY . .
-
-# This is being used in a docker compose context, therefore no need to specify port.
+# This is being used in a docker compose context, therefore no need to expose ports
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
