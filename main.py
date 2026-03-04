@@ -17,12 +17,14 @@ async def send_to_slack_webhook(data: dict, slack_url: str) -> None:
     """Sends data to the Slack webhook (async)."""
     if not slack_url:
         logger.error("Slack webhook not configured.")
-        raise HTTPException(status_code=500, detail="Slack webhook not configured.")
+        raise HTTPException(
+            status_code=500, detail="Slack webhook not configured.")
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
-                slack_url, json=data, headers={"Content-Type": "application/json"}
+                slack_url, json=data, headers={
+                    "Content-Type": "application/json"}
             )
             resp.raise_for_status()
         logger.info("Message sent to Slack successfully.")
@@ -84,7 +86,7 @@ async def process_post(request: Request, slack_url: str):
 
         item_id = item.get("id", "0")
         ticket_url_text = f"<https://support.avionics411.com/front/ticket.form.php?id={item_id}|#{item_id}>"
-        if data.get("event", "update") == "update":
+        if (event_type := data.get("event", "update")) == "update":
             text = f"Ticket updated"
         else:
             text = f"New ticket"
@@ -98,28 +100,97 @@ async def process_post(request: Request, slack_url: str):
             }
         )
 
-        # Description
+        # Title
         item_name = item.get("name")
-        item_content = item.get("content")
-        text = BeautifulSoup(item_content, "html.parser").get_text().strip()
-        if not text:
-            text = "_No description provided._"
-        text = text if len(text) <= 700 else text[:700] + "..."
         payload["blocks"].append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Title:* {item_name}\n\n*Description:*\n{text}",
+                    "text": f"*Title:* {item_name}",
                 },
             }
         )
+
+        # Description if it's a new ticket
+        if event_type != "update":
+            item_content = item.get("content")
+            text = BeautifulSoup(item_content, "html.parser").get_text().strip()
+            if not text:
+                text = "_No description provided._"
+            text = text if len(text) <= 700 else text[:700] + "..."
+            payload["blocks"].append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Description:*\n{text}",
+                    },
+                }
+            )
+        # Otherwise add list of changes.
+        else:
+            payload["blocks"].append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Changes:*"
+                    }
+                }
+            )
+            # Bulleted list
+            # Either a case I haven't run into 
+            # OR an item was removed.
+            if len(data.get("changes", [])) == 0:
+                return 200
+            change_bullet = "=>"
+            for change in data.get("changes", []):
+                previous = change.get("previous")
+                new = change.get("new")
+                
+                # Handle lists in terms of new/old
+                if isinstance(new, list):
+                    # Calculate list diff
+                    old_ids = [i['value'] for i in previous]
+                    new_ids = [i['value'] for i in new]
+                    added = [i['label'] for i in new if i['value'] not in old_ids]
+                    removed = [i['label'] for i in previous if i['value'] not in new_ids]
+                    
+                    spacer = "\n\t\t"
+                    add_symbol = "*+*"
+                    remove_symbol = "*-*"
+                    add_pre = f"{spacer}{add_symbol} "
+                    rem_pre = f"{spacer}{remove_symbol} "
+                    
+                    str_rep = f"{add_pre if len(added) > 0 else ""}{add_pre.join(added)}{rem_pre if len(removed) > 0 else ""}{rem_pre.join(removed)}"
+                    
+                    payload["blocks"].append(
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"{change_bullet} *{change['field_label']}:* {str_rep}"
+                            }
+                        }
+                    )
+                # Individual, not a list.
+                else: 
+                    payload["blocks"].append(
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"{change_bullet} *{change['field_label']}:* {previous['label']} *->* {new['label']}"
+                            }
+                        }
+                    )
 
         # Divider
         payload["blocks"].append({"type": "divider"})
 
         await send_to_slack_webhook(payload, slack_url)
-
+        
         return {"description_text": post_data_text}
 
     except HTTPException:
