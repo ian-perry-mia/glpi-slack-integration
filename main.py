@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from loguru import logger
 from bs4 import BeautifulSoup
 import tomllib
@@ -30,10 +30,9 @@ async def send_to_slack_webhook(data: dict, slack_url: str) -> None:
         logger.info("Message sent to Slack successfully.")
     except httpx.HTTPError as e:
         logger.error(f"Error sending to Slack: {e}")
-        raise HTTPException(status_code=500, detail="Error sending to Slack")
 
 
-async def process_post(request: Request, slack_url: str):
+async def process_post(body: bytes, slack_url: str) -> None:
     """Process GLPI notifications and send them to the per-route Slack URL."""
     priority_lookup = [
         "",  # Indexed at 1
@@ -56,17 +55,16 @@ async def process_post(request: Request, slack_url: str):
     }
 
     try:
-        post_data = await request.body()
-        post_data_text = post_data.decode("utf-8", errors="replace")
+        post_data_text = body.decode("utf-8", errors="replace")
         data = json.loads(post_data_text)
-        item = data.get("item")
+        item = data.get("item", {})
 
         # Initialize payload
         payload = {"blocks": []}
 
         # Context header
         priority = item.get("priority", 1)
-        priority_text = priority_lookup[priority]
+        priority_text = priority_lookup[priority] if 1 <= priority <= 6 else "❓ Unknown"
 
         status_text = status_lookup.get(
             item.get("status", {}).get("name", "N/A"), "❌ Unknown"
@@ -83,13 +81,15 @@ async def process_post(request: Request, slack_url: str):
         )
 
         # Title (ticket updated/etc)
-
         item_id = item.get("id", "0")
         ticket_url_text = f"<https://support.avionics411.com/front/ticket.form.php?id={item_id}|#{item_id}>"
-        if (event_type := data.get("event", "update")) == "update":
-            text = f"Ticket updated"
+
+        event_type = data.get("event", "new")
+        if event_type == "update":
+            text = "Ticket updated"
         else:
-            text = f"New ticket"
+            text = "New ticket"
+
         payload["blocks"].append(
             {"type": "header", "text": {"type": "plain_text", "text": text}}
         )
@@ -101,7 +101,7 @@ async def process_post(request: Request, slack_url: str):
         )
 
         # Title
-        item_name = item.get("name")
+        item_name = item.get("name") or "_No title provided._"
         payload["blocks"].append(
             {
                 "type": "section",
@@ -114,8 +114,8 @@ async def process_post(request: Request, slack_url: str):
 
         # Description if it's a new ticket
         if event_type != "update":
-            item_content = item.get("content")
-            text = BeautifulSoup(item_content, "html.parser").get_text().strip()
+            item_content = item.get("content", "")
+            text = BeautifulSoup(item_content, "html.parser").get_text().strip() if item_content else ""
             if not text:
                 text = "_No description provided._"
             text = text if len(text) <= 700 else text[:700] + "..."
@@ -139,32 +139,31 @@ async def process_post(request: Request, slack_url: str):
                     }
                 }
             )
-            # Bulleted list
-            # Either a case I haven't run into 
-            # OR an item was removed.
-            if len(data.get("changes", [])) == 0:
-                return 200
+
+            changes = data.get("changes", [])
+            if len(changes) == 0:
+                logger.info("Update event received with no changes, skipping.")
+                return
+
             change_bullet = "=>"
-            for change in data.get("changes", []):
+            for change in changes:
                 previous = change.get("previous")
                 new = change.get("new")
-                
-                # Handle lists in terms of new/old
+
                 if isinstance(new, list):
-                    # Calculate list diff
                     old_ids = [i['value'] for i in previous]
                     new_ids = [i['value'] for i in new]
                     added = [i['label'] for i in new if i['value'] not in old_ids]
                     removed = [i['label'] for i in previous if i['value'] not in new_ids]
-                    
+
                     spacer = "\n\t\t"
                     add_symbol = "*+*"
                     remove_symbol = "*-*"
                     add_pre = f"{spacer}{add_symbol} "
                     rem_pre = f"{spacer}{remove_symbol} "
-                    
-                    str_rep = f"{add_pre if len(added) > 0 else ""}{add_pre.join(added)}{rem_pre if len(removed) > 0 else ""}{rem_pre.join(removed)}"
-                    
+
+                    str_rep = f"{add_pre if added else ''}{add_pre.join(added)}{rem_pre if removed else ''}{rem_pre.join(removed)}"
+
                     payload["blocks"].append(
                         {
                             "type": "section",
@@ -174,8 +173,7 @@ async def process_post(request: Request, slack_url: str):
                             }
                         }
                     )
-                # Individual, not a list.
-                else: 
+                else:
                     payload["blocks"].append(
                         {
                             "type": "section",
@@ -190,14 +188,9 @@ async def process_post(request: Request, slack_url: str):
         payload["blocks"].append({"type": "divider"})
 
         await send_to_slack_webhook(payload, slack_url)
-        
-        return {"description_text": post_data_text}
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.exception(f"Error processing POST request: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 def register_webhook_routes(app: FastAPI, cfg: dict) -> None:
@@ -226,9 +219,10 @@ def register_webhook_routes(app: FastAPI, cfg: dict) -> None:
             logger.error(f"Missing url for webhook.{name}")
             continue
 
-        # Bind per-route slack_url using default arg to avoid closure issues
-        async def handler(request: Request, _slack_url=slack_url):
-            return await process_post(request, _slack_url)
+        async def handler(request: Request, background_tasks: BackgroundTasks, _slack_url=slack_url):
+            body = await request.body()
+            background_tasks.add_task(process_post, body, _slack_url)
+            return {"status": "accepted"}
 
         route_name = f"webhook_{name}"
         app.add_api_route(endpoint, handler, methods=["POST"], name=route_name)
