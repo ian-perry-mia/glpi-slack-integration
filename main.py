@@ -141,7 +141,7 @@ async def process_post(body: bytes, slack_url: str, itemtype: str) -> None:
         # Otherwise add list of changes.
         else:
             user = item.get("user_editor", {}).get("name", "None")
-            payload["blocks".append(
+            payload["blocks"].append(
                 {
                     "type": "section",
                     "text": {
