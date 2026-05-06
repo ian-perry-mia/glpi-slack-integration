@@ -32,7 +32,7 @@ async def send_to_slack_webhook(data: dict, slack_url: str) -> None:
         logger.error(f"Error sending to Slack: {e}")
 
 
-async def process_post(body: bytes, slack_url: str) -> None:
+async def process_post(body: bytes, slack_url: str, itemtype: str) -> None:
     """Process GLPI notifications and send them to the per-route Slack URL."""
     priority_lookup = [
         "",  # Indexed at 1
@@ -82,13 +82,13 @@ async def process_post(body: bytes, slack_url: str) -> None:
 
         # Title (ticket updated/etc)
         item_id = item.get("id", "0")
-        ticket_url_text = f"<https://support.avionics411.com/front/ticket.form.php?id={item_id}|#{item_id}>"
+        ticket_url_text = f"<https://support.avionics411.com/front/{itemtype}.form.php?id={item_id}|#{item_id}>"
 
         event_type = data.get("event", "new")
         if event_type == "update":
-            text = "Ticket updated"
+            text = f"{itemtype.capitalize()} updated"
         else:
-            text = "New ticket"
+            text = f"New {itemtype}"
 
         payload["blocks"].append(
             {"type": "header", "text": {"type": "plain_text", "text": text}}
@@ -120,7 +120,7 @@ async def process_post(body: bytes, slack_url: str) -> None:
             if not text:
                 text = "_No description provided._"
             text = text if len(text) <= 700 else text[:700] + "..."
-            payload["blocks".append(
+            payload["blocks"].append(
                 {
                     "type": "section",
                     "text": {
@@ -241,7 +241,8 @@ def register_webhook_routes(app: FastAPI, cfg: dict) -> None:
 
         async def handler(request: Request, background_tasks: BackgroundTasks, _slack_url=slack_url):
             body = await request.body()
-            background_tasks.add_task(process_post, body, _slack_url)
+            itemtype = request.query_params.get("item", "ticket").lower()
+            background_tasks.add_task(process_post, body, _slack_url, itemtype)
             return {"status": "accepted"}
 
         route_name = f"webhook_{name}"
