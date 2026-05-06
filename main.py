@@ -115,10 +115,20 @@ async def process_post(body: bytes, slack_url: str) -> None:
         # Description if it's a new ticket
         if event_type != "update":
             item_content = item.get("content", "")
+            user = item.get("user_recipient", {}).get("name", "None")
             text = BeautifulSoup(item_content, "html.parser").get_text().strip() if item_content else ""
             if not text:
                 text = "_No description provided._"
             text = text if len(text) <= 700 else text[:700] + "..."
+            payload["blocks".append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Submitted By:* {user}"
+                    }
+                }
+            )
             payload["blocks"].append(
                 {
                     "type": "section",
@@ -130,6 +140,16 @@ async def process_post(body: bytes, slack_url: str) -> None:
             )
         # Otherwise add list of changes.
         else:
+            user = item.get("user_editor", {}).get("name", "None")
+            payload["blocks".append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Edited By:* {user}"
+                    }
+                }
+            )
             payload["blocks"].append(
                 {
                     "type": "section",
